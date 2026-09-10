@@ -1,0 +1,7 @@
+smolagents
+langchain-community
+sentence-transformers
+faiss-cpu
+huggingface_hub
+langchain-huggingface
+python-dotenv
