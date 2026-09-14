@@ -56,6 +56,18 @@ Run the interactive agent loop. It will load the FAISS database and initialize t
 python agent.py
 ```
 
+**Multi-Repository Access & Dynamic Ingestion:**
+You can start the agent with multiple GitHub repositories at once using the `--repos` flag and GitHub shorthand:
+```bash
+python agent.py --repos psf/requests tiangolo/fastapi
+```
+
+Alternatively, you can dynamically add new repositories on the fly during your chat session using the `/add` command:
+```text
+You: /add psf/requests
+```
+The agent will dynamically clone, ingest, and merge the new code into your active FAISS index without losing context!
+
 ### Example Interaction:
 ```text
 🤖 Serverless Code Navigator Agent Initialized!
