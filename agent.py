@@ -5,7 +5,7 @@ import requests
 from dotenv import load_dotenv
 from smolagents import CodeAgent, HfApiModel, tool
 from langchain_community.vectorstores import FAISS
-from langchain_huggingface import HuggingFaceEndpointEmbeddings
+from langchain_huggingface import HuggingFaceEmbeddings
 from ingest import ingest_repository
 
 # Global variable to hold the retriever to avoid reloading it on every tool call
@@ -44,12 +44,8 @@ def init_agent(index_path: str = "faiss_index"):
     if not hf_token or hf_token == "your_token_here":
         raise ValueError("Please set a valid HUGGINGFACEHUB_API_TOKEN in the .env file.")
 
-    print("Loading embedding model via Free API...")
-    embeddings = HuggingFaceEndpointEmbeddings(
-        model="sentence-transformers/all-MiniLM-L6-v2",
-        task="feature-extraction",
-        huggingfacehub_api_token=hf_token
-    )
+    print("Loading embedding model (sentence-transformers/all-MiniLM-L6-v2) locally...")
+    embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
 
     print("Loading FAISS vector database...")
     vectorstore = FAISS.load_local(index_path, embeddings, allow_dangerous_deserialization=True)
@@ -72,27 +68,37 @@ def init_agent(index_path: str = "faiss_index"):
     
     return agent
 
-def prepare_repo(repo_path_or_url: str) -> tuple[str, str]:
-    """Prepares the repository by cloning if necessary and returning the local path and index path."""
-    if repo_path_or_url.startswith(("http://", "https://", "git@")):
-        repo_name = repo_path_or_url.rstrip("/").split("/")[-1].replace(".git", "")
-        local_repo_path = os.path.join("repos", repo_name)
-        if not os.path.exists(local_repo_path):
-            print(f"Cloning {repo_path_or_url} into {local_repo_path}...")
-            os.makedirs("repos", exist_ok=True)
-            subprocess.run(["git", "clone", repo_path_or_url, local_repo_path], check=True)
+def prepare_repos(repo_urls: list) -> tuple[str, str]:
+    """Prepares multiple repositories by cloning and returning the local base path and index path."""
+    base_dir = "repos/multi_repo"
+    os.makedirs(base_dir, exist_ok=True)
+    
+    for repo_path_or_url in repo_urls:
+        if repo_path_or_url.startswith(("http://", "https://", "git@")):
+            repo_name = repo_path_or_url.rstrip("/").split("/")[-1].replace(".git", "")
+            local_repo_path = os.path.join(base_dir, repo_name)
+            if not os.path.exists(local_repo_path):
+                print(f"Cloning {repo_path_or_url} into {local_repo_path}...")
+                subprocess.run(["git", "clone", repo_path_or_url, local_repo_path], check=True)
+            else:
+                print(f"Repository already cloned at {local_repo_path}")
         else:
-            print(f"Repository already cloned at {local_repo_path}")
-    else:
-        repo_name = os.path.basename(os.path.abspath(repo_path_or_url))
-        local_repo_path = repo_path_or_url
+            repo_name = os.path.basename(os.path.abspath(repo_path_or_url))
+            local_repo_path = os.path.join(base_dir, repo_name)
+            if not os.path.exists(local_repo_path) and os.path.exists(repo_path_or_url):
+                print(f"Using local path: {repo_path_or_url}")
+                local_repo_path = repo_path_or_url
+                
+    index_path = "multi_repo_faiss_index"
+    if len(repo_urls) == 1:
+        repo_name = repo_urls[0].rstrip("/").split("/")[-1].replace(".git", "")
+        index_path = f"{repo_name}_faiss_index"
         
-    index_path = f"{repo_name}_faiss_index"
     if not os.path.exists(index_path):
-        print(f"Index '{index_path}' not found. Running ingestion for {local_repo_path}...")
-        ingest_repository(local_repo_path, save_path=index_path)
+        print(f"Index '{index_path}' not found. Running ingestion for {base_dir}...")
+        ingest_repository(base_dir, save_path=index_path)
         
-    return local_repo_path, index_path
+    return base_dir, index_path
 
 def prepare_github_user(username: str) -> tuple[str, str]:
     """Fetches, clones, and prepares an index for all repositories of a GitHub user."""
@@ -120,6 +126,19 @@ def prepare_github_user(username: str) -> tuple[str, str]:
         raise ValueError(f"No repositories found for {username}")
         
     print(f"Found {len(repos)} repositories.")
+    for i, repo in enumerate(repos):
+        print(f"[{i+1}] {repo['name']}")
+    
+    print("\nEnter the numbers of the repositories you want to index (comma-separated), or press Enter for all:")
+    selection = input("> ").strip()
+    if selection:
+        try:
+            indices = [int(x.strip()) - 1 for x in selection.split(",")]
+            repos = [repos[i] for i in indices if 0 <= i < len(repos)]
+            print(f"Selected {len(repos)} repositories.")
+        except Exception as e:
+            print("Invalid selection, proceeding with all repositories.")
+            
     base_dir = os.path.join("repos", username)
     os.makedirs(base_dir, exist_ok=True)
     
@@ -141,18 +160,18 @@ def prepare_github_user(username: str) -> tuple[str, str]:
         
     return base_dir, index_path
 
-def interactive_session(index_path: str = "faiss_index", repo: str = None, github_user: str = None):
+def interactive_session(index_path: str = "faiss_index", repos: list = None, github_user: str = None):
     if github_user:
         try:
             _, index_path = prepare_github_user(github_user)
         except Exception as e:
             print(f"Failed to prepare github user repositories: {e}")
             return
-    elif repo:
+    elif repos:
         try:
-            _, index_path = prepare_repo(repo)
+            _, index_path = prepare_repos(repos)
         except Exception as e:
-            print(f"Failed to prepare repository: {e}")
+            print(f"Failed to prepare repositories: {e}")
             return
 
     try:
@@ -191,8 +210,8 @@ if __name__ == "__main__":
     load_dotenv()
     parser = argparse.ArgumentParser(description="Query the ingested code repository.")
     parser.add_argument("--index", type=str, default="faiss_index", help="Path to the saved FAISS index.")
-    parser.add_argument("--repo", type=str, help="Path or URL to the repository to analyze.")
+    parser.add_argument("--repos", nargs="+", type=str, help="One or more paths or URLs to the repositories to analyze.")
     parser.add_argument("--github-user", type=str, help="GitHub username to ingest all repositories for.")
     
     args = parser.parse_args()
-    interactive_session(args.index, args.repo, args.github_user)
+    interactive_session(args.index, args.repos, args.github_user)

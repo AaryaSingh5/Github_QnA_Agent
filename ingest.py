@@ -3,7 +3,7 @@ import argparse
 from dotenv import load_dotenv
 from langchain_community.document_loaders import DirectoryLoader, TextLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langchain_huggingface import HuggingFaceEndpointEmbeddings
+from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_community.vectorstores import FAISS
 
 def ingest_repository(repo_path: str, save_path: str = "faiss_index"):
@@ -44,12 +44,9 @@ def ingest_repository(repo_path: str, save_path: str = "faiss_index"):
     if not hf_token or hf_token == "your_token_here":
         raise ValueError("Please set a valid HUGGINGFACEHUB_API_TOKEN in the .env file.")
 
-    print("Loading embedding model via Free API (sentence-transformers/all-MiniLM-L6-v2)...")
-    embeddings = HuggingFaceEndpointEmbeddings(
-        model="sentence-transformers/all-MiniLM-L6-v2",
-        task="feature-extraction",
-        huggingfacehub_api_token=hf_token
-    )
+    print(f"Loading embedding model (sentence-transformers/all-MiniLM-L6-v2) locally...")
+    # Change: using local embeddings instead of the API endpoint to avoid rate limits
+    embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
 
     print("Generating embeddings and building FAISS vector database...")
     vectorstore = FAISS.from_documents(chunks, embeddings)
